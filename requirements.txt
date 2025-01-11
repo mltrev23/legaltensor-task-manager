@@ -1,0 +1,8 @@
+python-dotenv
+faiss-cpu
+bittensor
+pydantic
+fastapi
+sentence_transformers
+numpy
+pytorch

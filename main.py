@@ -1,9 +1,13 @@
 import os
 import requests
+import numpy as np
 import bittensor as bt
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from fastapi import FastAPI
+
+from .utils.vector_db import VectorDatabase
+from .utils.embedding import TextToEmbedding
 
 class TaskApproveRequest(BaseModel):
     readme_md: str
@@ -13,11 +17,16 @@ class TaskApproveRequest(BaseModel):
 
 # Contribution API Server
 class ContributionAPIServer:
-    def __init__(self, vector_db, threshold=0.7):
+    def __init__(self, vector_db_file_path = None, score_threshold=0.7, approval_rate_threshold=0.7):
         load_dotenv()
 
-        self.vector_db = vector_db
-        self.threshold = threshold
+        self.vector_db = VectorDatabase()
+        if vector_db_file_path:
+            self.vector_db.load_from_file(vector_db_file_path)
+
+        self.embedding = TextToEmbedding()
+        self.score_threshold = score_threshold
+        self.approval_rate_threshold = approval_rate_threshold
         self.app = FastAPI()
         self.subnet_pool_url = os.environ.get('SUBNET_POOL_API')
 
@@ -45,6 +54,17 @@ class ContributionAPIServer:
                 score = requests.post(f"{validator}/score_task", json=task_data).json()
                 scores.append(score)
             
+            approval_rate = sum([score > self.score_threshold for score in scores])
+            if approval_rate < self.approval_rate_threshold:
+                return {"message": "Task not approved", "details": f"approval_rate: {approval_rate}, threshold: {self.approval_rate_threshold}"}
+
+            avg = sum(scores) / len(scores)
+            if avg < self.score_threshold:
+                return {"message": "Task not approved", "details": f"overall_score_average: {avg}, threshold: {self.score_threshold}"}
+        
+            embedding = np.array(self.embedding.embed(data.readme_md))
+            self.vector_db.add(embedding, metadata)
+            
             return {"message": "Task submitted successfully!", "task_id": task_id}
 
     def get_validators(self):
@@ -52,9 +72,3 @@ class ContributionAPIServer:
         avail_uids = list(metagraph.n.items())
         validator_uids = [metagraph.S[uid] > self.vpermit_tao_limit for uid in avail_uids]
         return requests.post(self.subnet_pool_url + '/healthy-endpoints', json = {'uids': validator_uids}).json()
-
-    def check_approval(self, task_id, avg_score):
-        if avg_score >= self.threshold:
-            print(f"Task {task_id} approved with average score {avg_score}.")
-        else:
-            print(f"Task {task_id} rejected with average score {avg_score}.")
