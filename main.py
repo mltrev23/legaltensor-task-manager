@@ -16,13 +16,16 @@ class TaskApproveRequest(BaseModel):
     prompt_txt: str
 
 # Contribution API Server
-class ContributionAPIServer:
+class TaskManager:
     def __init__(self, vector_db_file_path = None, score_threshold=0.7, approval_rate_threshold=0.7):
         load_dotenv()
 
         self.vector_db = VectorDatabase()
-        if vector_db_file_path:
-            self.vector_db.load_from_file(vector_db_file_path)
+        self.vector_db_file_path = vector_db_file_path
+        if self.vector_db_file_path:
+            self.vector_db.load_from_file(self.vector_db_file_path)
+        else:
+            self.vector_db_file_path = './tasks.pkl'
 
         self.embedding = TextToEmbedding()
         self.score_threshold = score_threshold
@@ -32,6 +35,9 @@ class ContributionAPIServer:
 
         self.vpermit_tao_limit = 4096
         self.setup_routes()
+    
+    def __close__(self):
+        self.vector_db.save(self.vector_db_file_path)
 
     def setup_routes(self):
         @self.app.post("/submit_task")
@@ -64,6 +70,7 @@ class ContributionAPIServer:
         
             embedding = np.array(self.embedding.embed(data.readme_md))
             self.vector_db.add(embedding, metadata)
+            self.vector_db.save(self.vector_db_file_path)
             
             return {"message": "Task submitted successfully!", "task_id": task_id}
 
@@ -72,3 +79,13 @@ class ContributionAPIServer:
         avail_uids = list(metagraph.n.items())
         validator_uids = [metagraph.S[uid] > self.vpermit_tao_limit for uid in avail_uids]
         return requests.post(self.subnet_pool_url + '/healthy-endpoints', json = {'uids': validator_uids}).json()
+
+if __name__ == '__main__':
+    import uvicorn
+
+    db_path = None
+    if os.path.exists('./tasks.pkl'):
+        db_path = './tasks.pkl'
+    task_manager = TaskManager(vector_db_file_path=db_path)
+
+    uvicorn.run(task_manager.app, host='0.0.0.0', port='20500')   
