@@ -15,17 +15,19 @@ class TaskApproveRequest(BaseModel):
     test_tsv: str
     prompt_txt: str
 
+def get_vector_db_url():
+    load_dotenv()
+
+    db_port = os.environ.get('WEAVIATE_PORT')
+    return f'http://localhost:{db_port}'
+
 # Contribution API Server
 class TaskManager:
-    def __init__(self, vector_db_file_path = None, score_threshold=0.7, approval_rate_threshold=0.7):
+    def __init__(self, vector_db_url = get_vector_db_url(), score_threshold=0.7, approval_rate_threshold=0.7):
         load_dotenv()
 
-        self.vector_db = VectorDatabase()
-        self.vector_db_file_path = vector_db_file_path
-        if self.vector_db_file_path:
-            self.vector_db.load_from_file(self.vector_db_file_path)
-        else:
-            self.vector_db_file_path = './tasks.pkl'
+        self.vector_db = VectorDatabase(vector_db_url)
+        self.vector_db_url = vector_db_url
 
         self.embedding = TextToEmbedding()
         self.score_threshold = score_threshold
@@ -35,9 +37,6 @@ class TaskManager:
 
         self.vpermit_tao_limit = 4096
         self.setup_routes()
-    
-    def __close__(self):
-        self.vector_db.save(self.vector_db_file_path)
 
     def setup_routes(self):
         @self.app.post("/submit_task")
@@ -70,9 +69,15 @@ class TaskManager:
         
             embedding = np.array(self.embedding.embed(data.readme_md))
             self.vector_db.add(embedding, metadata)
-            self.vector_db.save(self.vector_db_file_path)
             
             return {"message": "Task submitted successfully!", "task_id": task_id}
+
+        @self.app.get('/task-embeddings')
+        async def get_tasks():
+            data = self.vector_db.get_all()
+            embeddings = [embedding for embedding, metadata in data]
+
+            return embeddings
 
     def get_validators(self):
         metagraph = bt.metagraph(205, 'test')
@@ -82,10 +87,5 @@ class TaskManager:
 
 if __name__ == '__main__':
     import uvicorn
-
-    db_path = None
-    if os.path.exists('./tasks.pkl'):
-        db_path = './tasks.pkl'
-    task_manager = TaskManager(vector_db_file_path=db_path)
-
+    task_manager = TaskManager()
     uvicorn.run(task_manager.app, host='0.0.0.0', port='20500')   

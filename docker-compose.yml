@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  weaviate:
+    image: semitechnologies/weaviate:latest
+    container_name: weaviate
+    ports:
+      - "${WEAVIATE_PORT}:8080" # Expose Weaviate API on localhost
+    environment:
+      QUERY_DEFAULTS_LIMIT: 20
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true" # Enable anonymous access
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate/task_db" # Persistent data storage path
+      ENABLE_MODULES: "text2vec-transformers" # Enable text2vec-transformers module (if needed)
+    volumes:
+      - weaviate_data:/var/lib/weaviate/task_db # Persist data across restarts
+
+volumes:
+  weaviate_data:
+    driver: local

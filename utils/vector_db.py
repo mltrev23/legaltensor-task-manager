@@ -1,86 +1,98 @@
-import faiss
 import pickle
+from typing import Any, Dict, List, Tuple
 import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+from weaviate import Client
 
 class VectorDatabase:
-    def __init__(self, dimension=384, metric=faiss.METRIC_L2):
+    def __init__(self, weaviate_url: str):
         """
-        Initialize the vector database with a given dimension and metric.
-        Default is L2 distance with 384 dimensions.
-        """
-        self.dimension = dimension
-        self.metric = metric
-        self.index = faiss.IndexFlat(dimension, metric)
-        self.metadata = []
+        Initialize TaskManager with a connection to a Weaviate vector database.
 
-    def add(self, embeddings, meta):
+        :param weaviate_url: URL of the Weaviate instance
         """
-        Add embeddings and their corresponding metadata to the database.
+        self.client = Client(weaviate_url)
 
-        :param embeddings: A numpy array of shape (N, dimension).
-        :param meta: A list of metadata corresponding to the embeddings.
-        """
-        if len(embeddings) != len(meta):
-            raise ValueError("Number of embeddings and metadata must match.")
-        if not isinstance(embeddings, np.ndarray):
-            embeddings = np.array(embeddings, dtype='float32')
-        if embeddings.shape[1] != self.dimension:
-            raise ValueError(f"Embeddings must have {self.dimension} dimensions.")
-        self.index.add(embeddings)
-        self.metadata.extend(meta)
+        # Define the schema for task objects in the vector database
+        if not self.client.schema.exists('Task'):
+            self.client.schema.create({
+                "classes": [
+                    {
+                        "class": "Task",
+                        "properties": [
+                            {
+                                "name": "data",
+                                "dataType": ["text"]
+                            },
+                            {
+                                "name": "embedding",
+                                "dataType": ["number[]"]
+                            }
+                        ]
+                    }
+                ]
+            })
 
-    def search(self, query_embedding, k=5):
+    def add(self, data: Dict[str, str], embedding: np.ndarray):
         """
-        Search for the top-k nearest neighbors of a query embedding.
+        Add a new data entry along with its embedding to the vector database.
 
-        :param query_embedding: A numpy array of shape (1, dimension).
-        :param k: The number of nearest neighbors to retrieve.
-        :return: A list of tuples (distance, metadata).
+        :param data: A dictionary containing task data (e.g., readme, prompt, etc.)
+        :param embedding: The embedding vector representing the task
         """
-        if not isinstance(query_embedding, np.ndarray):
-            query_embedding = np.array(query_embedding, dtype='float32')
-        if query_embedding.shape[1] != self.dimension:
-            raise ValueError(f"Query embedding must have {self.dimension} dimensions.")
-        distances, indices = self.index.search(query_embedding, k)
-        results = [
-            (distances[0][i], self.metadata[indices[0][i]])
-            for i in range(len(indices[0]))
-            if indices[0][i] != -1
-        ]
-        return results
+        self.client.data_object.create({
+            "data": data,
+            "embedding": embedding.tolist()
+        }, "Task")
 
-    def save(self, filepath):
+    def get_all(self) -> List[Tuple[np.ndarray, Dict[str, str]]]:
         """
-        Save the vector database to a file.
-        """
-        with open(filepath, 'wb') as f:
-            pickle.dump({'index': faiss.serialize_index(self.index), 'metadata': self.metadata}, f)
-            
-    def load_from_file(self, filepath):
-        """
-        Load the vector database from a file and update the current instance.
+        Retrieve all entries from the vector database.
 
-        :param filepath: The path to the saved vector database file.
+        :return: A list of tuples where each tuple contains an embedding and its corresponding data
         """
-        with open(filepath, 'rb') as f:
-            data = pickle.load(f)
-        self.index = faiss.deserialize_index(data['index'])
-        self.metadata = data['metadata']
+        results = self.client.data_object.get(class_name="Task")
+        tasks = []
 
-    @staticmethod
-    def load(filepath):
-        """
-        Load the vector database from a file.
-        """
-        with open(filepath, 'rb') as f:
-            data = pickle.load(f)
-        db = VectorDatabase()
-        db.index = faiss.deserialize_index(data['index'])
-        db.metadata = data['metadata']
-        return db
+        for obj in results["objects"]:
+            embedding = np.array(obj["vector"])
+            data = obj["properties"]["data"]
+            tasks.append((embedding, data))
 
-    def size(self):
+        return tasks
+
+    def save(self, file_path: str):
         """
-        Get the number of items in the database.
+        Save the current state of the vector database to a file (Weaviate doesn't support direct export).
+
+        :param file_path: Path to the file where the database will be saved
         """
-        return self.index.ntotal
+        all_data = self.get_all()
+        with open(file_path, 'wb') as file:
+            pickle.dump(all_data, file)
+
+    def load_from_file(self, file_path: str):
+        """
+        Load the database from a file and populate the vector database.
+
+        :param file_path: Path to the file from which the database will be loaded
+        """
+        with open(file_path, 'rb') as file:
+            all_data = pickle.load(file)
+
+        for embedding, data in all_data:
+            self.add(data, embedding)
+
+    def search(self, query_embedding: np.ndarray, top_k: int = 1) -> List[Dict[str, str]]:
+        """
+        Search the vector database for the closest embedding to the query embedding.
+
+        :param query_embedding: The embedding vector to search for
+        :param top_k: Number of top similar results to retrieve
+        :return: A list of data dictionaries corresponding to the closest embeddings
+        """
+        query_vector = query_embedding.tolist()
+        results = self.client.query.get("Task", ["data"]).with_near_vector({"vector": query_vector}).with_limit(top_k).do()
+
+        return [obj["properties"]["data"] for obj in results["data"]["Get"]["Task"]]
