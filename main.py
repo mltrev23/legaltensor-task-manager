@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 from fastapi import FastAPI
 
-from .utils.vector_db import VectorDatabase
-from .utils.embedding import TextToEmbedding
+from utils.vector_db import VectorDatabase
+from utils.embedding import TextToEmbedding
 
 class TaskApproveRequest(BaseModel):
     readme_md: str
@@ -88,4 +88,4 @@ class TaskManager:
 if __name__ == '__main__':
     import uvicorn
     task_manager = TaskManager()
-    uvicorn.run(task_manager.app, host='0.0.0.0', port='20500')   
+    uvicorn.run(task_manager.app, host='0.0.0.0', port=20500)   

@@ -4,7 +4,7 @@ bittensor
 pydantic
 fastapi
 numpy
-pytorch
-weaviate-client
+torch
+weaviate-client==3.99.0a5
 scikit-learn
 sentence-transformers
